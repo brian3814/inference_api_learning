@@ -53,16 +53,13 @@ class ModelManager:
         model_path = self._get_model_path(model_id)
 
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                model_path, trust_remote_code=True
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
-                trust_remote_code=True,
                 torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
                 device_map=self.device if self.device == "cuda" else None,
             )
