@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from typing import AsyncGenerator, Union
 
@@ -44,12 +45,14 @@ class GenerationService:
     def _get_generation_kwargs(
         self,
         input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
         max_tokens: int,
         temperature: float,
         top_p: float,
     ) -> dict:
         kwargs = {
             "input_ids": input_ids,
+            "attention_mask": attention_mask,
             "max_new_tokens": max_tokens,
             "do_sample": temperature > 0,
             "pad_token_id": self.manager.tokenizer.pad_token_id,
@@ -100,13 +103,17 @@ class GenerationService:
     ) -> tuple[str, int, int]:
         generation_kwargs = self._get_generation_kwargs(
             inputs["input_ids"],
+            inputs["attention_mask"],
             max_tokens,
             temperature,
             top_p,
         )
 
-        with torch.no_grad():
-            outputs = self.manager.model.generate(**generation_kwargs)
+        def _run():
+            with torch.no_grad():
+                return self.manager.model.generate(**generation_kwargs)
+
+        outputs = await asyncio.to_thread(_run)
 
         new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
         completion_tokens = len(new_tokens)
@@ -134,19 +141,38 @@ class GenerationService:
 
         generation_kwargs = self._get_generation_kwargs(
             inputs["input_ids"],
+            inputs["attention_mask"],
             max_tokens,
             temperature,
             top_p,
         )
         generation_kwargs["streamer"] = streamer
 
-        thread = threading.Thread(
-            target=self._run_generation,
-            args=(generation_kwargs,),
-        )
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _generate_and_drain():
+            # Run generation (feeds streamer via its callback)
+            gen_thread = threading.Thread(
+                target=self._run_generation,
+                args=(generation_kwargs,),
+            )
+            gen_thread.start()
+
+            # Drain the blocking streamer iterator and forward to async queue
+            for text in streamer:
+                loop.call_soon_threadsafe(queue.put_nowait, text)
+
+            gen_thread.join()
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        thread = threading.Thread(target=_generate_and_drain)
         thread.start()
 
-        for text in streamer:
+        while True:
+            text = await queue.get()
+            if text is None:
+                break
             if text:
                 yield text
 
