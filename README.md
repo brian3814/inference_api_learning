@@ -78,3 +78,40 @@ PORT=8000
 - `GET /v1/models/status` — Current model status
 - `POST /v1/chat/completions` — Chat completions (supports streaming)
 - `GET /docs` — Interactive API docs
+
+## Usage Examples
+
+### Load a model
+
+```bash
+curl -X POST http://localhost:8000/v1/models/load \
+  -H "Content-Type: application/json" \
+  -d '{"model_id": "microsoft/DialoGPT-medium"}'
+```
+
+### Chat (non-streaming)
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "microsoft/DialoGPT-medium",
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ]
+  }'
+```
+
+### Chat (streaming)
+
+```bash
+curl -N -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "microsoft/DialoGPT-medium",
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "stream": true
+  }'
+```
