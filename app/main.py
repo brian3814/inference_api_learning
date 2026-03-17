@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .routers import chat_router, models_router
+from .routers.chat import generation_service
 from .services.model_manager import model_manager
 
 
@@ -13,8 +14,10 @@ async def lifespan(app: FastAPI):
     print(f"Device: {model_manager.device}")
     print(f"Default model: {settings.default_model}")
     yield
+    print("Shutting down...")
+    generation_service.shutdown()
     await model_manager.unload_model()
-    print("Model unloaded, shutting down.")
+    print("Model unloaded, shutdown complete.")
 
 
 app = FastAPI(

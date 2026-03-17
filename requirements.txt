@@ -3,6 +3,8 @@ uvicorn[standard]
 pydantic-settings
 python-dotenv
 sse-starlette
+--extra-index-url https://download.pytorch.org/whl/cu130
 torch
 transformers
 accelerate
+bitsandbytes

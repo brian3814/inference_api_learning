@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from ..config import settings
 
@@ -58,13 +58,32 @@ class ModelManager:
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
+            model_kwargs = {
+                "torch_dtype": torch.float16 if self.device != "cpu" else torch.float32,
+            }
+
+            if settings.load_in_4bit:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+                model_kwargs["device_map"] = "auto"
+            elif settings.load_in_8bit:
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
+                model_kwargs["device_map"] = "auto"
+            elif self.device == "cuda":
+                model_kwargs["device_map"] = "auto"
+
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
-                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
-                device_map=self.device if self.device == "cuda" else None,
+                **model_kwargs,
             )
 
-            if self.device != "cuda":
+            if not (settings.load_in_4bit or settings.load_in_8bit or self.device == "cuda"):
                 self.model = self.model.to(self.device)
 
             self.model.eval()

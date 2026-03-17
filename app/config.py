@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     models_dir: str = "./models"
     max_new_tokens: int = 256
     device: Literal["cuda", "mps", "cpu", "auto"] = "auto"
+    load_in_4bit: bool = False
+    load_in_8bit: bool = False
 
     # Server settings
     host: str = "0.0.0.0"

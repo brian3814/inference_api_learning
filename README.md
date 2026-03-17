@@ -19,6 +19,8 @@ DEFAULT_MODEL=microsoft/DialoGPT-medium
 MODELS_DIR=./models
 MAX_NEW_TOKENS=256
 DEVICE=auto  # Options: cuda, mps, cpu, auto
+LOAD_IN_4BIT=false  # 4-bit quantization (requires CUDA + bitsandbytes)
+LOAD_IN_8BIT=false  # 8-bit quantization (requires CUDA + bitsandbytes)
 HOST=0.0.0.0
 PORT=8000
 ```

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 from typing import AsyncGenerator, Union
 
@@ -9,10 +10,16 @@ from ..schemas.chat import ChatMessage
 from ..config import settings
 from .model_manager import ModelManager
 
+logger = logging.getLogger(__name__)
+
 
 class GenerationService:
     def __init__(self, manager: ModelManager):
         self.manager = manager
+        self._shutdown_event = threading.Event()
+
+    def shutdown(self):
+        self._shutdown_event.set()
 
     def _format_messages(self, messages: list[ChatMessage]) -> str:
         if self.manager.tokenizer is None:
@@ -152,21 +159,31 @@ class GenerationService:
         loop = asyncio.get_running_loop()
 
         def _generate_and_drain():
-            # Run generation (feeds streamer via its callback)
             gen_thread = threading.Thread(
                 target=self._run_generation,
                 args=(generation_kwargs,),
+                daemon=True,
             )
             gen_thread.start()
 
-            # Drain the blocking streamer iterator and forward to async queue
-            for text in streamer:
-                loop.call_soon_threadsafe(queue.put_nowait, text)
+            try:
+                for text in streamer:
+                    if self._shutdown_event.is_set():
+                        break
+                    try:
+                        loop.call_soon_threadsafe(queue.put_nowait, text)
+                    except RuntimeError:
+                        break
+            except Exception:
+                pass
 
-            gen_thread.join()
-            loop.call_soon_threadsafe(queue.put_nowait, None)
+            gen_thread.join(timeout=5)
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except RuntimeError:
+                pass
 
-        thread = threading.Thread(target=_generate_and_drain)
+        thread = threading.Thread(target=_generate_and_drain, daemon=True)
         thread.start()
 
         while True:
