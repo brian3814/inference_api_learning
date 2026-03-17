@@ -1,74 +1,80 @@
 # Self-Hosted Inference API
 
-An OpenAI-compatible API for local model inference using HuggingFace Transformers.
+An OpenAI-compatible API for local model inference with a React chat UI.
 
-## Setup
+## Structure
 
-1. Create a virtual environment and install dependencies:
-
-```bash
-python -m venv env
-source env/bin/activate  # On Windows: env\Scripts\activate
-pip install -r requirements.txt
+```
+backend/    FastAPI server (uv-managed Python)
+frontend/   React + Vite + TypeScript chat UI
+build.bat   Windows build script
+build.sh    Linux/Mac build script
 ```
 
-2. (Optional) Create a `.env` file to customize settings:
+## Development Setup
+
+### Backend
 
 ```bash
+cd backend
+uv sync
+uv run python run.py
+```
+
+The API runs at `http://localhost:8000`. Docs at `/docs`.
+
+### Frontend (dev mode)
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Opens at `http://localhost:5173` with API calls proxied to the backend.
+
+## Production Build
+
+Build the frontend and bundle it into the backend as static files:
+
+```bash
+# Windows
+build.bat
+
+# Linux/Mac
+./build.sh
+```
+
+Then run:
+
+```bash
+cd backend
+uv run python run.py
+```
+
+Open `http://localhost:8000` to use the chat UI.
+
+## Configuration
+
+Create `backend/.env` (see `backend/.env.example`):
+
+```
 DEFAULT_MODEL=microsoft/DialoGPT-medium
 MODELS_DIR=./models
 MAX_NEW_TOKENS=256
-DEVICE=auto  # Options: cuda, mps, cpu, auto
-LOAD_IN_4BIT=false  # 4-bit quantization (requires CUDA + bitsandbytes)
-LOAD_IN_8BIT=false  # 8-bit quantization (requires CUDA + bitsandbytes)
+DEVICE=auto
+LOAD_IN_4BIT=false
+LOAD_IN_8BIT=false
 HOST=0.0.0.0
 PORT=8000
 ```
 
-## Starting the Server
-
-```bash
-python run.py
-```
-
-The server will start at `http://localhost:8000`. API docs are available at `/docs`.
-
-## Models Directory
-
-The API can load models from HuggingFace Hub or from local directories.
-
-### Loading from HuggingFace
-
-Simply use the model ID when making API calls (e.g., `microsoft/DialoGPT-medium`). The model will be downloaded automatically.
-
-### Loading Local Models
-
-Place models in the `./models` directory (or the path specified by `MODELS_DIR`). Each model should be in its own subdirectory containing the required HuggingFace model files.
-
-Example structure:
-```
-models/
-  dialogpt-small/
-    config.json
-    model.safetensors
-    tokenizer.json
-    tokenizer_config.json
-    generation_config.json
-```
-
-To use a local model, reference it by its folder name (e.g., `dialogpt-small`).
-
-### Downloading Models
-
-You can download models from HuggingFace using the `huggingface-cli`:
-
-```bash
-pip install huggingface_hub
-huggingface-cli download microsoft/DialoGPT-small --local-dir ./models/dialogpt-small
-```
-
 ## API Endpoints
 
-- `GET /` - API info
-- `GET /health` - Health check and current model status
-- `GET /docs` - Interactive API documentation
+- `GET /health` — Health check and model status
+- `GET /v1/models` — List available models
+- `POST /v1/models/load` — Load a model (`{"model_id": "..."}`)
+- `POST /v1/models/unload` — Unload current model
+- `GET /v1/models/status` — Current model status
+- `POST /v1/chat/completions` — Chat completions (supports streaming)
+- `GET /docs` — Interactive API docs
