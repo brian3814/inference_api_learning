@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
 from .config import settings
-from .routers import chat_router, models_router
+from .routers import chat_router, models_router, tools_router
 from .routers.chat import generation_service
 from .services.model_manager import model_manager
 
@@ -44,6 +44,7 @@ app.add_middleware(
 
 app.include_router(chat_router)
 app.include_router(models_router)
+app.include_router(tools_router)
 
 
 @app.get("/health")

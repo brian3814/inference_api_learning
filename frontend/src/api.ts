@@ -28,17 +28,35 @@ export interface ChatMessage {
   content: string;
 }
 
-export async function streamChat(
-  messages: ChatMessage[],
-  onChunk: (text: string) => void,
-  onDone: () => void,
-) {
+export interface ToolActivity {
+  type: 'tool_call' | 'tool_result';
+  name: string;
+  arguments?: Record<string, unknown>;
+  content?: string;
+}
+
+export interface StreamChatOptions {
+  messages: ChatMessage[];
+  onChunk: (text: string) => void;
+  onDone: () => void;
+  toolsEnabled?: boolean;
+  onToolActivity?: (activity: ToolActivity) => void;
+}
+
+export async function streamChat({
+  messages,
+  onChunk,
+  onDone,
+  toolsEnabled = false,
+  onToolActivity,
+}: StreamChatOptions) {
   const res = await fetch('/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messages,
       stream: true,
+      ...(toolsEnabled && { tools_enabled: true }),
     }),
   });
 
@@ -73,8 +91,16 @@ export async function streamChat(
 
       try {
         const parsed = JSON.parse(data);
-        const content = parsed.choices?.[0]?.delta?.content;
-        if (content) onChunk(content);
+        const delta = parsed.choices?.[0]?.delta;
+        if (!delta) continue;
+
+        if (delta.tool_activity && onToolActivity) {
+          onToolActivity(delta.tool_activity as ToolActivity);
+        }
+
+        if (delta.content) {
+          onChunk(delta.content);
+        }
       } catch {
         // skip unparseable lines
       }
@@ -82,4 +108,10 @@ export async function streamChat(
   }
 
   onDone();
+}
+
+export async function getAvailableTools(): Promise<{ tools: Record<string, unknown>[] }> {
+  const res = await fetch('/v1/tools');
+  if (!res.ok) throw new Error('Failed to get tools');
+  return res.json();
 }

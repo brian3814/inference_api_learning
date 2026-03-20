@@ -15,9 +15,12 @@ from ..schemas.chat import (
 )
 from ..services.model_manager import model_manager
 from ..services.generation import GenerationService
+from ..services.agent import AgentService
+from ..tools import tool_registry
 
 router = APIRouter(tags=["Chat"])
 generation_service = GenerationService(model_manager)
+agent_service = AgentService(generation_service)
 
 
 @router.post("/v1/chat/completions")
@@ -29,6 +32,16 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     model_id = request.model or model_manager.current_model_id
+    use_agent = request.tools_enabled and len(tool_registry) > 0
+
+    if use_agent:
+        if request.stream:
+            return EventSourceResponse(
+                stream_agent_response(request, model_id),
+                media_type="text/event-stream",
+            )
+        else:
+            return await generate_agent_response(request, model_id)
 
     if request.stream:
         return EventSourceResponse(
@@ -58,6 +71,38 @@ async def generate_response(
                 Choice(
                     index=0,
                     message=ChatMessage(role="assistant", content=generated_text),
+                    finish_reason="stop",
+                )
+            ],
+            usage=Usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            ),
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def generate_agent_response(
+    request: ChatCompletionRequest,
+    model_id: str,
+) -> ChatCompletionResponse:
+    try:
+        final_text, tool_history, prompt_tokens, completion_tokens = await agent_service.run(
+            messages=request.messages,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+        )
+
+        return ChatCompletionResponse(
+            model=model_id,
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatMessage(role="assistant", content=final_text),
                     finish_reason="stop",
                 )
             ],
@@ -113,6 +158,65 @@ async def stream_response(request: ChatCompletionRequest, model_id: str):
         )
         yield {"data": final_chunk.model_dump_json()}
         yield {"data": "[DONE]"}
+
+    except Exception as e:
+        yield {"data": f'{{"error": "{str(e)}"}}'}
+
+
+async def stream_agent_response(request: ChatCompletionRequest, model_id: str):
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+
+    try:
+        async for event in agent_service.run_streaming(
+            messages=request.messages,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
+        ):
+            if event["type"] == "tool_activity":
+                chunk = ChatCompletionChunk(
+                    id=chunk_id,
+                    created=created,
+                    model=model_id,
+                    choices=[
+                        ChoiceDelta(
+                            index=0,
+                            delta={"tool_activity": event["data"]},
+                        )
+                    ],
+                )
+                yield {"data": chunk.model_dump_json()}
+
+            elif event["type"] == "content_delta":
+                chunk = ChatCompletionChunk(
+                    id=chunk_id,
+                    created=created,
+                    model=model_id,
+                    choices=[
+                        ChoiceDelta(
+                            index=0,
+                            delta={"content": event["data"]},
+                        )
+                    ],
+                )
+                yield {"data": chunk.model_dump_json()}
+
+            elif event["type"] == "done":
+                final_chunk = ChatCompletionChunk(
+                    id=chunk_id,
+                    created=created,
+                    model=model_id,
+                    choices=[
+                        ChoiceDelta(
+                            index=0,
+                            delta={},
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+                yield {"data": final_chunk.model_dump_json()}
+                yield {"data": "[DONE]"}
 
     except Exception as e:
         yield {"data": f'{{"error": "{str(e)}"}}'}

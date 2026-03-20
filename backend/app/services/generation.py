@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import threading
 from typing import AsyncGenerator, Union
@@ -12,6 +13,17 @@ from .model_manager import ModelManager
 
 logger = logging.getLogger(__name__)
 
+FALLBACK_TOOL_SYSTEM_PROMPT = """You have access to the following tools. To call a tool, output a tool_call block:
+
+<tool_call>
+{{"name": "tool_name", "arguments": {{"arg": "value"}}}}
+</tool_call>
+
+Available tools:
+{tool_descriptions}
+
+When you need information from the web, use the appropriate tool. After receiving tool results, provide your final answer to the user. Only call tools when necessary."""
+
 
 class GenerationService:
     def __init__(self, manager: ModelManager):
@@ -21,11 +33,87 @@ class GenerationService:
     def shutdown(self):
         self._shutdown_event.set()
 
-    def _format_messages(self, messages: list[ChatMessage]) -> str:
+    def _format_messages(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict] | None = None,
+    ) -> str:
         if self.manager.tokenizer is None:
             raise RuntimeError("No tokenizer loaded")
 
-        message_dicts = [{"role": m.role, "content": m.content} for m in messages]
+        native_tools = self.manager.supports_native_tools() and tools
+
+        message_dicts = []
+        for m in messages:
+            d: dict = {"role": m.role, "content": m.content}
+            if m.tool_calls:
+                d["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in m.tool_calls
+                ]
+            if m.tool_call_id:
+                d["tool_call_id"] = m.tool_call_id
+            if m.name:
+                d["name"] = m.name
+            message_dicts.append(d)
+
+        if native_tools:
+            try:
+                return self.manager.tokenizer.apply_chat_template(
+                    message_dicts,
+                    tools=tools,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                logger.warning("Native tool template failed, falling back")
+
+        # Fallback: inject tool descriptions as system prompt
+        if tools:
+            tool_descriptions = "\n".join(
+                f"- {t['function']['name']}: {t['function']['description']} "
+                f"Parameters: {json.dumps(t['function']['parameters'])}"
+                for t in tools
+            )
+            tool_system = FALLBACK_TOOL_SYSTEM_PROMPT.format(
+                tool_descriptions=tool_descriptions
+            )
+
+            # Convert tool-role messages to text for fallback
+            fallback_dicts = []
+            for d in message_dicts:
+                if d["role"] == "tool":
+                    name = d.get("name", "unknown")
+                    fallback_dicts.append({
+                        "role": "user",
+                        "content": f"Tool Result ({name}): {d['content']}",
+                    })
+                elif d["role"] == "assistant" and d.get("tool_calls"):
+                    # Represent the assistant's tool call in the fallback format
+                    tc_text = d.get("content", "") or ""
+                    for tc in d["tool_calls"]:
+                        tc_text += f'\n<tool_call>\n{{"name": "{tc["function"]["name"]}", "arguments": {tc["function"]["arguments"]}}}\n</tool_call>'
+                    fallback_dicts.append({
+                        "role": "assistant",
+                        "content": tc_text.strip(),
+                    })
+                else:
+                    fallback_dicts.append({"role": d["role"], "content": d["content"]})
+
+            # Prepend or merge tool system prompt
+            if fallback_dicts and fallback_dicts[0]["role"] == "system":
+                fallback_dicts[0]["content"] = tool_system + "\n\n" + fallback_dicts[0]["content"]
+            else:
+                fallback_dicts.insert(0, {"role": "system", "content": tool_system})
+
+            message_dicts = fallback_dicts
 
         if hasattr(self.manager.tokenizer, "apply_chat_template"):
             try:
@@ -37,14 +125,20 @@ class GenerationService:
             except Exception:
                 pass
 
+        # Final fallback: plain text
         prompt_parts = []
-        for msg in messages:
-            if msg.role == "system":
-                prompt_parts.append(f"System: {msg.content}")
-            elif msg.role == "user":
-                prompt_parts.append(f"User: {msg.content}")
-            elif msg.role == "assistant":
-                prompt_parts.append(f"Assistant: {msg.content}")
+        for d in message_dicts:
+            role = d["role"]
+            content = d["content"]
+            if role == "system":
+                prompt_parts.append(f"System: {content}")
+            elif role == "user":
+                prompt_parts.append(f"User: {content}")
+            elif role == "assistant":
+                prompt_parts.append(f"Assistant: {content}")
+            elif role == "tool":
+                name = d.get("name", "tool")
+                prompt_parts.append(f"Tool Result ({name}): {content}")
 
         prompt_parts.append("Assistant:")
         return "\n".join(prompt_parts)
@@ -79,12 +173,13 @@ class GenerationService:
         temperature: float = 1.0,
         top_p: float = 1.0,
         stream: bool = False,
+        tools: list[dict] | None = None,
     ) -> Union[tuple[str, int, int], AsyncGenerator[str, None]]:
         if not self.manager.is_loaded():
             raise RuntimeError("No model loaded")
 
         max_tokens = max_tokens or settings.max_new_tokens
-        prompt = self._format_messages(messages)
+        prompt = self._format_messages(messages, tools=tools)
 
         inputs = self.manager.tokenizer(
             prompt,

@@ -4,9 +4,34 @@ import time
 import uuid
 
 
+class FunctionCall(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: FunctionCall
+
+
+class FunctionDefinition(BaseModel):
+    name: str
+    description: str
+    parameters: dict
+
+
+class ToolDefinition(BaseModel):
+    type: Literal["function"] = "function"
+    function: FunctionDefinition
+
+
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
+    tool_calls: Optional[list[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -16,6 +41,7 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = Field(default=1.0, ge=0.0, le=2.0)
     max_tokens: Optional[int] = None
     top_p: float = Field(default=1.0, ge=0.0, le=1.0)
+    tools_enabled: bool = False
 
 
 class Usage(BaseModel):
@@ -27,7 +53,7 @@ class Usage(BaseModel):
 class Choice(BaseModel):
     index: int
     message: ChatMessage
-    finish_reason: Literal["stop", "length"]
+    finish_reason: Literal["stop", "length", "tool_calls"]
 
 
 class ChatCompletionResponse(BaseModel):
@@ -42,7 +68,7 @@ class ChatCompletionResponse(BaseModel):
 class ChoiceDelta(BaseModel):
     index: int
     delta: dict
-    finish_reason: Optional[Literal["stop", "length"]] = None
+    finish_reason: Optional[Literal["stop", "length", "tool_calls"]] = None
 
 
 class ChatCompletionChunk(BaseModel):

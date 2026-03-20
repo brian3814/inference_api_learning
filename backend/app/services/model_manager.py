@@ -15,6 +15,7 @@ class ModelManager:
         self.tokenizer = None
         self.current_model_id: Optional[str] = None
         self.device = self._detect_device()
+        self._native_tool_support: bool = False
 
     def _detect_device(self) -> str:
         if settings.device != "auto":
@@ -88,6 +89,7 @@ class ModelManager:
 
             self.model.eval()
             self.current_model_id = model_id
+            self._native_tool_support = self._probe_native_tools()
 
             return {
                 "status": "loaded",
@@ -109,6 +111,7 @@ class ModelManager:
             self.tokenizer = None
 
         self.current_model_id = None
+        self._native_tool_support = False
 
         gc.collect()
 
@@ -117,6 +120,39 @@ class ModelManager:
 
     def is_loaded(self) -> bool:
         return self.model is not None and self.tokenizer is not None
+
+    def _probe_native_tools(self) -> bool:
+        """Check if the loaded model's chat template supports tool definitions."""
+        if self.tokenizer is None:
+            return False
+        if not hasattr(self.tokenizer, "apply_chat_template"):
+            return False
+
+        dummy_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "_probe",
+                    "description": "probe",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        dummy_messages = [{"role": "user", "content": "hi"}]
+
+        try:
+            self.tokenizer.apply_chat_template(
+                dummy_messages,
+                tools=dummy_tools,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            return True
+        except Exception:
+            return False
+
+    def supports_native_tools(self) -> bool:
+        return self._native_tool_support
 
     def get_status(self) -> dict:
         return {

@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     load_in_4bit: bool = False
     load_in_8bit: bool = False
 
+    # Agent settings
+    agent_max_iterations: int = 5
+
     # Server settings
     host: str = "0.0.0.0"
     port: int = 8000
