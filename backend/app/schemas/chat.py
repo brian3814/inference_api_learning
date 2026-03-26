@@ -42,6 +42,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     top_p: float = Field(default=1.0, ge=0.0, le=1.0)
     tools_enabled: bool = False
+    conversation_id: Optional[str] = None
 
 
 class Usage(BaseModel):
@@ -63,6 +64,7 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[Choice]
     usage: Usage
+    conversation_id: Optional[str] = None
 
 
 class ChoiceDelta(BaseModel):
@@ -77,3 +79,25 @@ class ChatCompletionChunk(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
     model: str
     choices: list[ChoiceDelta]
+    conversation_id: Optional[str] = None
+
+
+class ConversationSummary(BaseModel):
+    id: str
+    title: Optional[str] = None
+    message_count: int
+    created_at: float
+    updated_at: float
+
+
+class ConversationDetail(BaseModel):
+    id: str
+    title: Optional[str] = None
+    messages: list[ChatMessage]
+    created_at: float
+    updated_at: float
+
+
+class ConversationListResponse(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[ConversationSummary]
