@@ -3,10 +3,17 @@ import { streamChat, type ChatMessage, type ToolActivity } from '../api';
 
 interface ChatPanelProps {
   modelLoaded: boolean;
+  conversationId: string | null;
+  messages: ChatMessage[];
+  onMessagesChange: (messages: ChatMessage[]) => void;
 }
 
-export default function ChatPanel({ modelLoaded }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export default function ChatPanel({
+  modelLoaded,
+  conversationId,
+  messages,
+  onMessagesChange,
+}: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [toolsEnabled, setToolsEnabled] = useState(false);
@@ -23,20 +30,23 @@ export default function ChatPanel({ modelLoaded }: ChatPanelProps) {
 
     const userMsg: ChatMessage = { role: 'user', content: text };
     const updated = [...messages, userMsg];
-    setMessages(updated);
+    onMessagesChange(updated);
     setInput('');
     setStreaming(true);
     setToolActivity([]);
 
     const assistantMsg: ChatMessage = { role: 'assistant', content: '' };
-    setMessages([...updated, assistantMsg]);
+    onMessagesChange([...updated, assistantMsg]);
+
+    // When using a conversation, only send the new user message
+    const toSend = conversationId ? [userMsg] : updated;
 
     try {
       await streamChat({
-        messages: updated,
+        messages: toSend,
         onChunk: (chunk) => {
           assistantMsg.content += chunk;
-          setMessages((prev) => {
+          onMessagesChange((prev) => {
             const copy = [...prev];
             copy[copy.length - 1] = { ...assistantMsg };
             return copy;
@@ -47,10 +57,11 @@ export default function ChatPanel({ modelLoaded }: ChatPanelProps) {
         onToolActivity: (activity) => {
           setToolActivity((prev) => [...prev, activity]);
         },
+        conversationId: conversationId ?? undefined,
       });
     } catch {
       assistantMsg.content += '\n[Error: stream failed]';
-      setMessages((prev) => {
+      onMessagesChange((prev) => {
         const copy = [...prev];
         copy[copy.length - 1] = { ...assistantMsg };
         return copy;
