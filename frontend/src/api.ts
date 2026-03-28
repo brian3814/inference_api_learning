@@ -41,6 +41,7 @@ export interface StreamChatOptions {
   onDone: () => void;
   toolsEnabled?: boolean;
   onToolActivity?: (activity: ToolActivity) => void;
+  conversationId?: string;
 }
 
 export async function streamChat({
@@ -49,6 +50,7 @@ export async function streamChat({
   onDone,
   toolsEnabled = false,
   onToolActivity,
+  conversationId,
 }: StreamChatOptions) {
   const res = await fetch('/v1/chat/completions', {
     method: 'POST',
@@ -57,6 +59,7 @@ export async function streamChat({
       messages,
       stream: true,
       ...(toolsEnabled && { tools_enabled: true }),
+      ...(conversationId && { conversation_id: conversationId }),
     }),
   });
 
@@ -114,4 +117,40 @@ export async function getAvailableTools(): Promise<{ tools: Record<string, unkno
   const res = await fetch('/v1/tools');
   if (!res.ok) throw new Error('Failed to get tools');
   return res.json();
+}
+
+// Conversation API
+
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  message_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ConversationDetail {
+  id: string;
+  title: string | null;
+  messages: ChatMessage[];
+  created_at: number;
+  updated_at: number;
+}
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const res = await fetch('/v1/conversations');
+  if (!res.ok) throw new Error('Failed to list conversations');
+  const data = await res.json();
+  return data.data;
+}
+
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  const res = await fetch(`/v1/conversations/${id}`);
+  if (!res.ok) throw new Error('Failed to get conversation');
+  return res.json();
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  const res = await fetch(`/v1/conversations/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete conversation');
 }
