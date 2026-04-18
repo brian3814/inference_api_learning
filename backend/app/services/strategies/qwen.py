@@ -1,0 +1,31 @@
+import re
+
+from ...schemas.chat import ToolCall
+from .base import ModelStrategy, parse_json_call
+
+PATTERN = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+
+class QwenStrategy(ModelStrategy):
+    """Parses Qwen-family tool calls: <tool_call>{"name": ..., "arguments": ...}</tool_call>"""
+
+    @property
+    def name(self) -> str:
+        return "qwen"
+
+    def parse_tool_calls(self, text: str) -> tuple[list[ToolCall] | None, str]:
+        matches = PATTERN.findall(text)
+        if not matches:
+            return None, text
+
+        calls = []
+        for match in matches:
+            call = parse_json_call(match)
+            if call:
+                calls.append(call)
+
+        if not calls:
+            return None, text
+
+        clean = PATTERN.sub("", text).strip()
+        return calls, clean

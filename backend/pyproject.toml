@@ -10,16 +10,19 @@ dependencies = [
     "python-dotenv",
     "sse-starlette",
     "torch",
-    "transformers",
+    "transformers>=5.4",
     "accelerate",
     "bitsandbytes",
     "duckduckgo-search>=8.1.1",
     "httpx>=0.28.1",
     "beautifulsoup4>=4.14.3",
+    "pillow>=12.2.0",
+    "torchvision",
 ]
 
 [tool.uv.sources]
 torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
 
 [[tool.uv.index]]
 name = "pytorch"

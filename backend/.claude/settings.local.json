@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/code/sideproject/inference_api/backend/app -type f -name *.py)",
+      "Bash(find /d/code/sideproject/inference_api/backend/app -type f -name *.py -o -type d)",
+      "Bash(uv add:*)",
+      "Bash(uv run:*)"
+    ]
+  }
+}

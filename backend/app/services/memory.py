@@ -43,7 +43,12 @@ class ConversationStore:
             if conv.title is None:
                 for m in conv.messages:
                     if m.get("role") == "user" and m.get("content"):
-                        conv.title = m["content"][:80]
+                        content = m["content"]
+                        if isinstance(content, list):
+                            content = " ".join(
+                                p.get("text", "") for p in content if p.get("type") == "text"
+                            )
+                        conv.title = (content or "")[:80] or None
                         break
 
     def delete(self, conversation_id: str) -> bool:

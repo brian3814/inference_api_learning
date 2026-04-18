@@ -10,14 +10,16 @@ function generateId() {
 
 export default function App() {
   const [modelLoaded, setModelLoaded] = useState(false);
+  const [modelMultimodal, setModelMultimodal] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(
     () => generateId(),
   );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const handleStatusChange = useCallback((loaded: boolean) => {
+  const handleStatusChange = useCallback((loaded: boolean, multimodal: boolean) => {
     setModelLoaded(loaded);
+    setModelMultimodal(multimodal);
   }, []);
 
   const handleNewChat = useCallback(() => {
@@ -70,6 +72,7 @@ export default function App() {
         <ModelPanel onStatusChange={handleStatusChange} />
         <ChatPanel
           modelLoaded={modelLoaded}
+          modelMultimodal={modelMultimodal}
           conversationId={conversationId}
           messages={messages}
           onMessagesChange={handleMessagesChange}

@@ -3,7 +3,7 @@ import logging
 from typing import AsyncGenerator
 
 from ..config import settings
-from ..schemas.chat import ChatMessage, ToolCall, FunctionCall
+from ..schemas.chat import ChatMessage, ToolCall
 from ..tools import tool_registry
 from .generation import GenerationService
 from .model_manager import ModelManager
@@ -33,7 +33,7 @@ class AgentService:
         Returns (final_text, tool_history, total_prompt_tokens, total_completion_tokens).
         """
         tool_defs = tool_registry.list_definitions()
-        parser = ToolCallParser(self.manager.supports_native_tools())
+        parser = ToolCallParser(self.manager.strategy)
 
         working_messages = list(messages)
         tool_history: list[dict] = []
@@ -118,7 +118,7 @@ class AgentService:
           {"type": "done"}
         """
         tool_defs = tool_registry.list_definitions()
-        parser = ToolCallParser(self.manager.supports_native_tools())
+        parser = ToolCallParser(self.manager.strategy)
 
         working_messages = list(messages)
 

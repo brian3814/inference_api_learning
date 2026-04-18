@@ -7,7 +7,7 @@ from typing import AsyncGenerator, Union
 import torch
 from transformers import TextIteratorStreamer
 
-from ..schemas.chat import ChatMessage
+from ..schemas.chat import ChatMessage, ImageContentPart, TextContentPart, extract_text
 from ..config import settings
 from .model_manager import ModelManager
 
@@ -23,6 +23,21 @@ Available tools:
 {tool_descriptions}
 
 When you need information from the web, use the appropriate tool. After receiving tool results, provide your final answer to the user. Only call tools when necessary."""
+
+
+def _to_text(content) -> str:
+    """Convert message content (str or list of content parts) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, TextContentPart):
+                parts.append(p.text)
+            elif isinstance(p, dict) and p.get("type") == "text":
+                parts.append(p.get("text", ""))
+        return " ".join(parts)
+    return str(content)
 
 
 class GenerationService:
@@ -45,7 +60,8 @@ class GenerationService:
 
         message_dicts = []
         for m in messages:
-            d: dict = {"role": m.role, "content": m.content}
+            content = _to_text(m.content) if not isinstance(m.content, str) else m.content
+            d: dict = {"role": m.role, "content": content}
             if m.tool_calls:
                 d["tool_calls"] = [
                     {
@@ -89,15 +105,15 @@ class GenerationService:
             # Convert tool-role messages to text for fallback
             fallback_dicts = []
             for d in message_dicts:
+                text_content = _to_text(d["content"])
                 if d["role"] == "tool":
                     name = d.get("name", "unknown")
                     fallback_dicts.append({
                         "role": "user",
-                        "content": f"Tool Result ({name}): {d['content']}",
+                        "content": f"Tool Result ({name}): {text_content}",
                     })
                 elif d["role"] == "assistant" and d.get("tool_calls"):
-                    # Represent the assistant's tool call in the fallback format
-                    tc_text = d.get("content", "") or ""
+                    tc_text = text_content or ""
                     for tc in d["tool_calls"]:
                         tc_text += f'\n<tool_call>\n{{"name": "{tc["function"]["name"]}", "arguments": {tc["function"]["arguments"]}}}\n</tool_call>'
                     fallback_dicts.append({
@@ -105,7 +121,7 @@ class GenerationService:
                         "content": tc_text.strip(),
                     })
                 else:
-                    fallback_dicts.append({"role": d["role"], "content": d["content"]})
+                    fallback_dicts.append({"role": d["role"], "content": text_content})
 
             # Prepend or merge tool system prompt
             if fallback_dicts and fallback_dicts[0]["role"] == "system":
@@ -129,7 +145,7 @@ class GenerationService:
         prompt_parts = []
         for d in message_dicts:
             role = d["role"]
-            content = d["content"]
+            content = _to_text(d["content"])
             if role == "system":
                 prompt_parts.append(f"System: {content}")
             elif role == "user":
@@ -143,22 +159,73 @@ class GenerationService:
         prompt_parts.append("Assistant:")
         return "\n".join(prompt_parts)
 
+    def _prepare_multimodal_inputs(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict] | None = None,
+    ) -> dict:
+        """Prepare inputs for multimodal models using the processor."""
+        from .image_utils import load_image
+
+        message_dicts = []
+        images = []
+        for m in messages:
+            if isinstance(m.content, str):
+                d: dict = {"role": m.role, "content": m.content}
+            else:
+                parts = []
+                for part in m.content:
+                    if isinstance(part, ImageContentPart):
+                        img = load_image(part.image_url.url)
+                        images.append(img)
+                        parts.append({"type": "image"})
+                    elif isinstance(part, TextContentPart):
+                        parts.append({"type": "text", "text": part.text})
+                d = {"role": m.role, "content": parts}
+            if m.tool_calls:
+                d["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in m.tool_calls
+                ]
+            if m.tool_call_id:
+                d["tool_call_id"] = m.tool_call_id
+            if m.name:
+                d["name"] = m.name
+            message_dicts.append(d)
+
+        template_kwargs = {"tokenize": False, "add_generation_prompt": True}
+        if self.manager.supports_native_tools() and tools:
+            template_kwargs["tools"] = tools
+        text = self.manager.processor.apply_chat_template(
+            message_dicts, **template_kwargs,
+        )
+
+        proc_kwargs: dict = {"text": text, "return_tensors": "pt"}
+        if images:
+            proc_kwargs["images"] = images
+        return self.manager.processor(**proc_kwargs).to(self.manager.device)
+
     def _get_generation_kwargs(
         self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        inputs: dict,
         max_tokens: int,
         temperature: float,
         top_p: float,
     ) -> dict:
-        kwargs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
+        kwargs = dict(inputs)
+        kwargs.update({
             "max_new_tokens": max_tokens,
             "do_sample": temperature > 0,
             "pad_token_id": self.manager.tokenizer.pad_token_id,
             "eos_token_id": self.manager.tokenizer.eos_token_id,
-        }
+        })
 
         if temperature > 0:
             kwargs["temperature"] = temperature
@@ -179,14 +246,17 @@ class GenerationService:
             raise RuntimeError("No model loaded")
 
         max_tokens = max_tokens or settings.max_new_tokens
-        prompt = self._format_messages(messages, tools=tools)
 
-        inputs = self.manager.tokenizer(
-            prompt,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-        ).to(self.manager.device)
+        if self.manager.is_multimodal:
+            inputs = self._prepare_multimodal_inputs(messages, tools)
+        else:
+            prompt = self._format_messages(messages, tools=tools)
+            inputs = self.manager.tokenizer(
+                prompt,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            ).to(self.manager.device)
 
         prompt_tokens = inputs["input_ids"].shape[1]
 
@@ -204,11 +274,7 @@ class GenerationService:
         prompt_tokens: int,
     ) -> tuple[str, int, int]:
         generation_kwargs = self._get_generation_kwargs(
-            inputs["input_ids"],
-            inputs["attention_mask"],
-            max_tokens,
-            temperature,
-            top_p,
+            inputs, max_tokens, temperature, top_p,
         )
 
         def _run():
@@ -217,12 +283,13 @@ class GenerationService:
 
         outputs = await asyncio.to_thread(_run)
 
-        new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
+        new_tokens = outputs[0][prompt_tokens:]
         completion_tokens = len(new_tokens)
 
+        skip = self.manager.strategy.skip_special_tokens if self.manager._strategy else True
         generated_text = self.manager.tokenizer.decode(
             new_tokens,
-            skip_special_tokens=True,
+            skip_special_tokens=skip,
         )
 
         return generated_text.strip(), prompt_tokens, completion_tokens
@@ -235,18 +302,15 @@ class GenerationService:
         top_p: float,
         prompt_tokens: int,
     ) -> AsyncGenerator[str, None]:
+        skip = self.manager.strategy.skip_special_tokens if self.manager._strategy else True
         streamer = TextIteratorStreamer(
             self.manager.tokenizer,
-            skip_special_tokens=True,
+            skip_special_tokens=skip,
             skip_prompt=True,
         )
 
         generation_kwargs = self._get_generation_kwargs(
-            inputs["input_ids"],
-            inputs["attention_mask"],
-            max_tokens,
-            temperature,
-            top_p,
+            inputs, max_tokens, temperature, top_p,
         )
         generation_kwargs["streamer"] = streamer
 

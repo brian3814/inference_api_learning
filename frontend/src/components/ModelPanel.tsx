@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { loadModel, getModelStatus, type ModelStatus } from '../api';
 
 interface ModelPanelProps {
-  onStatusChange: (loaded: boolean) => void;
+  onStatusChange: (loaded: boolean, multimodal: boolean) => void;
 }
 
 export default function ModelPanel({ onStatusChange }: ModelPanelProps) {
@@ -15,7 +15,7 @@ export default function ModelPanel({ onStatusChange }: ModelPanelProps) {
     try {
       const s = await getModelStatus();
       setStatus(s);
-      onStatusChange(s.loaded);
+      onStatusChange(s.loaded, s.multimodal ?? false);
     } catch {
       // backend might not be running yet
     }

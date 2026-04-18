@@ -27,6 +27,7 @@ class LoadModelRequest(BaseModel):
 @router.get("/v1/models")
 async def list_models() -> ModelListResponse:
     models = []
+    seen = set()
 
     if model_manager.current_model_id:
         models.append(
@@ -35,13 +36,22 @@ async def list_models() -> ModelListResponse:
                 owned_by="loaded",
             )
         )
+        seen.add(model_manager.current_model_id)
 
+    # Cached HuggingFace models in models_dir
+    for model_id in model_manager.list_cached_models():
+        if model_id not in seen:
+            models.append(ModelInfo(id=model_id, owned_by="cached"))
+            seen.add(model_id)
+
+    # Plain local directories in models_dir
     models_dir = Path(settings.models_dir)
     if models_dir.exists():
         for item in models_dir.iterdir():
-            if item.is_dir() and item.name != ".gitkeep":
-                if item.name != model_manager.current_model_id:
+            if item.is_dir() and not item.name.startswith("models--") and item.name != ".gitkeep":
+                if item.name not in seen:
                     models.append(ModelInfo(id=item.name))
+                    seen.add(item.name)
 
     return ModelListResponse(data=models)
 

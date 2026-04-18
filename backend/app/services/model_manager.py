@@ -3,19 +3,26 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import logging
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, BitsAndBytesConfig
+
+logger = logging.getLogger(__name__)
 
 from ..config import settings
+from .strategies import ModelStrategy, detect_strategy
 
 
 class ModelManager:
     def __init__(self):
         self.model = None
         self.tokenizer = None
+        self.processor = None
         self.current_model_id: Optional[str] = None
         self.device = self._detect_device()
         self._native_tool_support: bool = False
+        self._strategy: ModelStrategy | None = None
+        self._is_multimodal: bool = False
 
     def _detect_device(self) -> str:
         if settings.device != "auto":
@@ -32,6 +39,58 @@ class ModelManager:
             return True
         local_path = Path(settings.models_dir) / model_id
         return local_path.exists()
+
+    def _resolve_dtype(self) -> torch.dtype:
+        dt = settings.torch_dtype
+        if dt == "float16":
+            return torch.float16
+        if dt == "bfloat16":
+            return torch.bfloat16
+        if dt == "float32":
+            return torch.float32
+        # auto
+        if self.device == "cpu":
+            return torch.float32
+        if self._is_multimodal:
+            return torch.bfloat16
+        return torch.float16
+
+    @property
+    def _project_cache_dir(self) -> str:
+        """Project-local cache directory for model downloads."""
+        path = Path(settings.models_dir).resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    def _resolve_cache_dir(self, model_id: str) -> str:
+        """Find which cache dir holds the model, or pick one for download.
+
+        Search order:
+          1. HuggingFace default cache (~/.cache/huggingface/hub)
+          2. Project cache (models_dir)
+          3. Fall back to project cache for new downloads
+        """
+        cache_subdir = "models--" + model_id.replace("/", "--")
+
+        # 1. Check HF default cache
+        try:
+            from huggingface_hub import constants
+            hf_cache = Path(constants.HF_HUB_CACHE)
+            if (hf_cache / cache_subdir).is_dir():
+                logger.info(f"Found {model_id} in HF cache: {hf_cache}")
+                return str(hf_cache)
+        except Exception:
+            pass
+
+        # 2. Check project cache
+        project_cache = Path(self._project_cache_dir)
+        if (project_cache / cache_subdir).is_dir():
+            logger.info(f"Found {model_id} in project cache: {project_cache}")
+            return str(project_cache)
+
+        # 3. Not cached anywhere — download to project cache
+        logger.info(f"Model {model_id} not cached, will download to: {project_cache}")
+        return str(project_cache)
 
     def _get_model_path(self, model_id: str) -> str:
         if os.path.exists(model_id):
@@ -52,15 +111,37 @@ class ModelManager:
         await self.unload_model()
 
         model_path = self._get_model_path(model_id)
+        cache_dir = self._resolve_cache_dir(model_id)
 
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            # Detect multimodal: try loading a processor first
+            try:
+                self.processor = AutoProcessor.from_pretrained(model_path, cache_dir=cache_dir)
+                self._is_multimodal = (
+                    hasattr(self.processor, "image_processor")
+                    and self.processor.image_processor is not None
+                )
+                logger.info(
+                    f"Processor loaded for {model_id}: "
+                    f"multimodal={self._is_multimodal}, "
+                    f"type={type(self.processor).__name__}, "
+                    f"has image_processor={hasattr(self.processor, 'image_processor')}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load processor for {model_id}: {e}")
+                self.processor = None
+                self._is_multimodal = False
+
+            if self.processor and hasattr(self.processor, "tokenizer"):
+                self.tokenizer = self.processor.tokenizer
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_path, cache_dir=cache_dir)
 
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
             model_kwargs = {
-                "torch_dtype": torch.float16 if self.device != "cpu" else torch.float32,
+                "torch_dtype": self._resolve_dtype(),
             }
 
             if settings.load_in_4bit:
@@ -79,10 +160,16 @@ class ModelManager:
             elif self.device == "cuda":
                 model_kwargs["device_map"] = "auto"
 
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                **model_kwargs,
-            )
+            if self._is_multimodal:
+                from transformers import AutoModelForImageTextToText
+                self.model = AutoModelForImageTextToText.from_pretrained(
+                    model_path, cache_dir=cache_dir, **model_kwargs,
+                )
+                logger.info(f"Loaded multimodal model: {model_id}")
+            else:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_path, cache_dir=cache_dir, **model_kwargs,
+                )
 
             if not (settings.load_in_4bit or settings.load_in_8bit or self.device == "cuda"):
                 self.model = self.model.to(self.device)
@@ -90,6 +177,7 @@ class ModelManager:
             self.model.eval()
             self.current_model_id = model_id
             self._native_tool_support = self._probe_native_tools()
+            self._strategy = detect_strategy(model_id, self._native_tool_support)
 
             return {
                 "status": "loaded",
@@ -110,8 +198,14 @@ class ModelManager:
             del self.tokenizer
             self.tokenizer = None
 
+        if self.processor is not None:
+            del self.processor
+            self.processor = None
+
         self.current_model_id = None
         self._native_tool_support = False
+        self._strategy = None
+        self._is_multimodal = False
 
         gc.collect()
 
@@ -154,11 +248,47 @@ class ModelManager:
     def supports_native_tools(self) -> bool:
         return self._native_tool_support
 
+    @property
+    def strategy(self) -> ModelStrategy:
+        if self._strategy is None:
+            raise RuntimeError("No model loaded")
+        return self._strategy
+
+    @property
+    def is_multimodal(self) -> bool:
+        return self._is_multimodal
+
+    def list_cached_models(self) -> list[str]:
+        """List model IDs cached in HF default cache or project cache."""
+        seen = set()
+        cached = []
+
+        dirs_to_scan = [Path(self._project_cache_dir)]
+        try:
+            from huggingface_hub import constants
+            hf_cache = Path(constants.HF_HUB_CACHE)
+            if hf_cache.exists():
+                dirs_to_scan.insert(0, hf_cache)
+        except Exception:
+            pass
+
+        for cache_path in dirs_to_scan:
+            if not cache_path.exists():
+                continue
+            for item in cache_path.iterdir():
+                if item.is_dir() and item.name.startswith("models--"):
+                    model_id = item.name.removeprefix("models--").replace("--", "/", 1)
+                    if model_id not in seen:
+                        seen.add(model_id)
+                        cached.append(model_id)
+        return sorted(cached)
+
     def get_status(self) -> dict:
         return {
             "loaded": self.is_loaded(),
             "model_id": self.current_model_id,
             "device": self.device,
+            "multimodal": self._is_multimodal,
         }
 
 

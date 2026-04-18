@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional, Union
 import time
 import uuid
 
@@ -26,9 +26,36 @@ class ToolDefinition(BaseModel):
     function: FunctionDefinition
 
 
+class ImageUrl(BaseModel):
+    url: str
+
+
+class TextContentPart(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageContentPart(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageUrl
+
+
+ContentPart = Annotated[
+    Union[TextContentPart, ImageContentPart], Field(discriminator="type")
+]
+MessageContent = Union[str, list[ContentPart]]
+
+
+def extract_text(content: MessageContent) -> str:
+    """Extract the text portion from any content format."""
+    if isinstance(content, str):
+        return content
+    return " ".join(p.text for p in content if isinstance(p, TextContentPart))
+
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
+    content: MessageContent
     tool_calls: Optional[list[ToolCall]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None

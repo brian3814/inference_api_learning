@@ -2,6 +2,7 @@ export interface ModelStatus {
   loaded: boolean;
   model_id: string | null;
   device: string;
+  multimodal: boolean;
 }
 
 export async function loadModel(modelId: string): Promise<Record<string, unknown>> {
@@ -23,9 +24,34 @@ export async function getModelStatus(): Promise<ModelStatus> {
   return res.json();
 }
 
+export interface ImageUrl {
+  url: string;
+}
+
+export interface TextContentPart {
+  type: 'text';
+  text: string;
+}
+
+export interface ImageContentPart {
+  type: 'image_url';
+  image_url: ImageUrl;
+}
+
+export type ContentPart = TextContentPart | ImageContentPart;
+export type MessageContent = string | ContentPart[];
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: MessageContent;
+}
+
+export function extractText(content: MessageContent): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((p): p is TextContentPart => p.type === 'text')
+    .map((p) => p.text)
+    .join(' ');
 }
 
 export interface ToolActivity {

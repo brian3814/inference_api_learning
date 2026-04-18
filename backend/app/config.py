@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     device: Literal["cuda", "mps", "cpu", "auto"] = "auto"
     load_in_4bit: bool = False
     load_in_8bit: bool = False
+    torch_dtype: str = "auto"  # "auto", "float16", "bfloat16", "float32"
 
     # Agent settings
     agent_max_iterations: int = 5
