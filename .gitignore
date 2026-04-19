@@ -4,6 +4,8 @@ backend/models/
 frontend/node_modules/
 frontend/dist/
 .env
+.claude/settings.local.json
+backend/.claude/settings.local.json
 __pycache__/
 *.pyc
 *.pyo

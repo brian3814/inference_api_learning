@@ -183,14 +183,31 @@ class ModelManager:
 
             if self._is_multimodal:
                 from transformers import AutoModelForImageTextToText
-                self.model = AutoModelForImageTextToText.from_pretrained(
-                    model_path, cache_dir=cache_dir, **model_kwargs,
-                )
-                logger.info(f"Loaded multimodal model: {model_id}")
+                model_cls = AutoModelForImageTextToText
             else:
-                self.model = AutoModelForCausalLM.from_pretrained(
+                model_cls = AutoModelForCausalLM
+
+            try:
+                self.model = model_cls.from_pretrained(
                     model_path, cache_dir=cache_dir, **model_kwargs,
                 )
+            except TypeError as e:
+                if "_is_hf_initialized" in str(e):
+                    logger.warning("Patching bitsandbytes Params4bit compatibility issue")
+                    import bitsandbytes as bnb
+                    _orig_new = bnb.nn.Params4bit.__new__
+                    def _patched_new(cls, *args, **kwargs):
+                        kwargs.pop("_is_hf_initialized", None)
+                        return _orig_new(cls, *args, **kwargs)
+                    bnb.nn.Params4bit.__new__ = _patched_new
+                    self.model = model_cls.from_pretrained(
+                        model_path, cache_dir=cache_dir, **model_kwargs,
+                    )
+                else:
+                    raise
+
+            if self._is_multimodal:
+                logger.info(f"Loaded multimodal model: {model_id}")
 
             if not (settings.load_in_4bit or settings.load_in_8bit or self.device == "cuda"):
                 self.model = self.model.to(self.device)
