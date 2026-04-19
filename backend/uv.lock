@@ -351,7 +351,7 @@ dependencies = [
 requires-dist = [
     { name = "accelerate" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
-    { name = "bitsandbytes" },
+    { name = "bitsandbytes", specifier = ">=0.45" },
     { name = "duckduckgo-search", specifier = ">=8.1.1" },
     { name = "fastapi" },
     { name = "httpx", specifier = ">=0.28.1" },
@@ -361,7 +361,7 @@ requires-dist = [
     { name = "sse-starlette" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu130" },
-    { name = "transformers", specifier = ">=5.4" },
+    { name = "transformers", specifier = "==5.5.0" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 
@@ -1508,7 +1508,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "5.5.4"
+version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -1521,9 +1521,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/1e/1e244ab2ab50a863e6b52cc55761910567fa532b69a6740f6e99c5fdbd98/transformers-5.5.4.tar.gz", hash = "sha256:2e67cadba81fc7608cc07c4dd54f524820bc3d95b1cabd0ef3db7733c4f8b82e", size = 8227649, upload-time = "2026-04-13T16:55:55.181Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/9d/fb46e729b461985f41a5740167688b924a4019141e5c164bea77548d3d9e/transformers-5.5.0.tar.gz", hash = "sha256:c8db656cf51c600cd8c75f06b20ef85c72e8b8ff9abc880c5d3e8bc70e0ddcbd", size = 8237745, upload-time = "2026-04-02T16:13:08.113Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/fb/162a66789c65e5afa3b051309240c26bf37fbc8fea285b4546ae747995a2/transformers-5.5.4-py3-none-any.whl", hash = "sha256:0bd6281b82966fe5a7a16f553ea517a9db1dee6284d7cb224dfd88fc0dd1c167", size = 10236696, upload-time = "2026-04-13T16:55:51.497Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/28/35f7411ff80a3640c1f4fc907dcbb6a65061ebb82f66950e38bfc9f7f740/transformers-5.5.0-py3-none-any.whl", hash = "sha256:821a9ff0961abbb29eb1eb686d78df1c85929fdf213a3fe49dc6bd94f9efa944", size = 10245591, upload-time = "2026-04-02T16:13:03.462Z" },
 ]
 
 [[package]]

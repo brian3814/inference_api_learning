@@ -164,11 +164,14 @@ class GenerationService:
         messages: list[ChatMessage],
         tools: list[dict] | None = None,
     ) -> dict:
-        """Prepare inputs for multimodal models using the processor."""
+        """Prepare inputs for multimodal models using the processor.
+
+        Uses a single apply_chat_template(tokenize=True) call so the processor
+        handles image token insertion and pixel value extraction together.
+        """
         from .image_utils import load_image
 
         message_dicts = []
-        images = []
         for m in messages:
             if isinstance(m.content, str):
                 d: dict = {"role": m.role, "content": m.content}
@@ -177,8 +180,7 @@ class GenerationService:
                 for part in m.content:
                     if isinstance(part, ImageContentPart):
                         img = load_image(part.image_url.url)
-                        images.append(img)
-                        parts.append({"type": "image"})
+                        parts.append({"type": "image", "image": img})
                     elif isinstance(part, TextContentPart):
                         parts.append({"type": "text", "text": part.text})
                 d = {"role": m.role, "content": parts}
@@ -200,17 +202,19 @@ class GenerationService:
                 d["name"] = m.name
             message_dicts.append(d)
 
-        template_kwargs = {"tokenize": False, "add_generation_prompt": True}
+        template_kwargs = {
+            "tokenize": True,
+            "return_dict": True,
+            "return_tensors": "pt",
+            "add_generation_prompt": True,
+        }
         if self.manager.supports_native_tools() and tools:
             template_kwargs["tools"] = tools
-        text = self.manager.processor.apply_chat_template(
+
+        inputs = self.manager.processor.apply_chat_template(
             message_dicts, **template_kwargs,
         )
-
-        proc_kwargs: dict = {"text": text, "return_tensors": "pt"}
-        if images:
-            proc_kwargs["images"] = images
-        return self.manager.processor(**proc_kwargs).to(self.manager.device)
+        return inputs.to(self.manager.device, dtype=self.manager.model.dtype)
 
     def _get_generation_kwargs(
         self,

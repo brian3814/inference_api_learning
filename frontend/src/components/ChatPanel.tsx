@@ -11,7 +11,7 @@ interface ChatPanelProps {
   modelMultimodal: boolean;
   conversationId: string | null;
   messages: ChatMessage[];
-  onMessagesChange: (messages: ChatMessage[]) => void;
+  onMessagesChange: (messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
 }
 
 export default function ChatPanel({

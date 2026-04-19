@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+from dotenv import load_dotenv
+load_dotenv()
+
 import uvicorn
 from app.config import settings
 

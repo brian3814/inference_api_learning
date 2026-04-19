@@ -92,6 +92,15 @@ class ModelManager:
         logger.info(f"Model {model_id} not cached, will download to: {project_cache}")
         return str(project_cache)
 
+    def _is_pre_quantized(self, model_path: str, cache_dir: str) -> bool:
+        """Check if a model already has a native quantization config."""
+        try:
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(model_path, cache_dir=cache_dir)
+            return getattr(config, "quantization_config", None) is not None
+        except Exception:
+            return False
+
     def _get_model_path(self, model_id: str) -> str:
         if os.path.exists(model_id):
             return model_id
@@ -144,21 +153,33 @@ class ModelManager:
                 "torch_dtype": self._resolve_dtype(),
             }
 
-            if settings.load_in_4bit:
+            # Skip BitsAndBytes if the model is already quantized natively
+            pre_quantized = self._is_pre_quantized(model_path, cache_dir)
+            if pre_quantized:
+                logger.info(f"Model {model_id} is already quantized, skipping BitsAndBytes")
+
+            if not pre_quantized and settings.load_in_4bit:
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_use_double_quant=True,
+                    llm_int8_enable_fp32_cpu_offload=True,
                 )
                 model_kwargs["device_map"] = "auto"
-            elif settings.load_in_8bit:
+            elif not pre_quantized and settings.load_in_8bit:
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_8bit=True,
+                    llm_int8_enable_fp32_cpu_offload=True,
                 )
                 model_kwargs["device_map"] = "auto"
             elif self.device == "cuda":
                 model_kwargs["device_map"] = "auto"
+
+            if model_kwargs.get("device_map") == "auto":
+                offload_dir = Path(settings.models_dir) / ".offload"
+                offload_dir.mkdir(parents=True, exist_ok=True)
+                model_kwargs["offload_folder"] = str(offload_dir)
 
             if self._is_multimodal:
                 from transformers import AutoModelForImageTextToText
